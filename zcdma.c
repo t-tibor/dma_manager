@@ -705,6 +705,8 @@ static void zcdma_deinit(struct zcdma* session)
         hw_info->dma_chan->name
         );
 
+    dmaengine_terminate_sync(session->hw->dma_chan);
+
     cleanup_transfer_data(session);
 
     return;
