@@ -124,7 +124,7 @@
 
 MODULE_LICENSE("GPL");
 
-#define DRIVER_NAME 			"dma_frontend"
+#define DRIVER_NAME 			"dma_manager"
 #define MAX_NAME_LENG			32
 #define TX_CHANNEL				0
 #define RX_CHANNEL				1
