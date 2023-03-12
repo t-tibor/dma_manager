@@ -19,7 +19,7 @@ enum zcdma_dma_dir
  * @brief Structure describing the dma hw channel.
  * 
  */
-struct zcdma_hw_info
+struct dma_hw_channel_info
 {
     enum zcdma_dma_dir  direction;
     struct dma_chan*    dma_chan;
@@ -29,7 +29,7 @@ struct zcdma_hw_info
 /**
  * @brief Forward declaration of the zerocopy-dma structure.
  * Only pointers to this type are used in the API,
- * so the implemenation details can be hidden.
+ * so the implementation details can be hidden.
  * 
  */
 struct zcdma;
@@ -38,11 +38,12 @@ struct zcdma;
 /**
  * @brief Create a new zerocopy-dma session.
  * 
- * @param hw_info Structure describing the dma HW channel to be used.
+ * @param hw_info   Structure describing the dma HW channel to be used.
+ *                  This structure is copied, so it shall not be preserved by the caller.
  * @return struct zcdma*    Pointer to a resulting structure,
- *                          or NULL when an error occured.
+ *                          or NULL when an error occurred.
  */
-struct zcdma* zcdma_alloc(const struct zcdma_hw_info* const hw_info);
+struct zcdma* zcdma_alloc(const struct dma_hw_channel_info* const hw_info);
 
 
 /**

@@ -124,36 +124,29 @@
 
 MODULE_LICENSE("GPL");
 
+// ------------------ Local constants ------------------
 #define DRIVER_NAME 			"dma_manager"
 #define MAX_NAME_LENG			32
-#define TX_CHANNEL				0
-#define RX_CHANNEL				1
 #define ERROR 					-1
-#define TEST_SIZE 				1024
 #define TIMEOUT_DEFAULT_MSECS	3000
 
 
+// ------------------ Local types ------------------
 struct dma_frontend {
-    struct channel_buffer *buffer_table_p;	/* user to kernel space interface */
-    dma_addr_t buffer_phys_addr;
+    // frontend parameters
+    char name[MAX_NAME_LENG];			    /* channel name */
 
-    struct device *dma_device_p;
+    // Used DMA channel
+    enum dma_transfer_direction direction;	/* DMA_MEM_TO_DEV or DMA_DEV_TO_MEM */
+    struct dma_chan* dma_channel;           /* dma support */
 
-    unsigned int timeout;				/* DMA transfer timeout */
-    int bdindex;
+    // Zerocopy backend
+    struct zcdma* zcdma;
 
-    struct dma_chan* dma_channel;			/* dma support */
-
-    /* Char device API */
+    // Char device API
     dev_t           dev_node;
     struct cdev     cdev;
     struct device*  char_device;
-    
-
-    /* Zerocopy backend */
-    char name[MAX_NAME_LENG];			/* channel name */
-    u32 direction;						/* DMA_MEM_TO_DEV or DMA_DEV_TO_MEM */
-    struct zcdma* zcdma;
 };
 
 
@@ -165,21 +158,16 @@ struct dma_manager {
 };
 
 
-static int total_count;
-/* The following module parameter controls if the internal test runs when the module is inserted.
- * Note that this test requires a transmit and receive channel to function and uses the first
- * transmit and receive channnels when multiple channels exist.
- */
-static unsigned internal_test = 0;
-module_param(internal_test, int, S_IRUGO);
 
-
+// ------------------ Local functions ------------------
 static int dma_manager_probe(struct platform_device *pdev);
-static int dma_manager_remove(struct platform_device *pdev);
+static void dma_manager_remove(struct platform_device *pdev);
 static int __init dma_manager_init(void);
 static void __exit dma_manager_exit(void);
 
 
+
+// ------------------ Global variables ------------------
 /**
  * @brief Global sysfs level device class.
  * This class will be used for all the devices created
@@ -188,15 +176,27 @@ static void __exit dma_manager_exit(void);
  * 
  * 
  */
-static const struct class* dma_char_device_class = NULL;
+static struct class* dma_char_device_class = NULL;
 
+
+// TODO
+/* The following module parameter controls if the internal test runs when the module is inserted.
+ * Note that this test requires a transmit and receive channel to function and uses the first
+ * transmit and receive channnels when multiple channels exist.
+ */
+static unsigned internal_test = 0;
+module_param(internal_test, int, S_IRUGO);
+
+
+
+// ------------------ Function definitions ------------------
 
 /* Open the device file and set up the data pointer to the proxy channel data for the
  * proxy channel such that the ioctl function can access the data structure later.
  */
 static int local_open(struct inode *ino, struct file *file)
 {
-    file->private_data = container_of(ino->i_cdev, struct dma_proxy_channel, cdev);
+    file->private_data = container_of(ino->i_cdev, struct dma_frontend, cdev);
 
     return 0;
 }
@@ -206,7 +206,7 @@ static int local_open(struct inode *ino, struct file *file)
 static int release(struct inode *ino, struct file *file)
 {
 #if 0
-    struct dma_proxy_channel *pchannel_p = (struct dma_proxy_channel *)file->private_data;
+    struct dma_frontend *pchannel_p = (struct dma_frontend *)file->private_data;
     struct dma_device *dma_device = pchannel_p->channel_p->device;
 
     /* Stop all the activity when the channel is closed assuming this
@@ -219,51 +219,62 @@ static int release(struct inode *ino, struct file *file)
     return 0;
 }
 
+
 static ssize_t read(struct file *file, char __user *userbuf, size_t count, loff_t *f_pos)
 {
-    ssize_t rc = 0;
     int read_size = 0;
-    struct dma_proxy_channel *pchannel_p = (struct dma_proxy_channel *)file->private_data;
+    struct dma_frontend* frontend = (struct dma_frontend *)file->private_data;
 
-    if (DMA_DEV_TO_MEM != pchannel_p->direction)
+    pr_debug("DMA read API is called with parameters: userbuf=0x%08p, count=%d, offset=%lld.\n", 
+                                                                        userbuf,
+                                                                        count,
+                                                                        *f_pos);
+
+    if (DMA_DEV_TO_MEM != frontend->direction)
     {
-        printk(KERN_ERR ": %s: can't read, is a TX device\n", pchannel_p->name);
+        pr_err("Can't read, '%s' is a TX device\n", frontend->name);
         return -EINVAL;
     }
 
-    read_size = zcdma_read(pchannel_p->zcdma, userbuf, count);	
+    read_size = zcdma_read(frontend->zcdma, userbuf, count);	
+    pr_debug("zcdma_read return: %d.\n", read_size);
     if (read_size <= 0)
     {
-        printk(KERN_ERR "%s: can't read(), no data and timeout or error occurred\n", pchannel_p->name);
+        pr_err("Can't read() on channel '%s', no data and timeout or error occurred.\n", frontend->name);
         return -EPERM;
     }
     
-    rc = read_size;
-    return rc;
+    return (ssize_t)read_size;
 }
+
 
 static ssize_t write(struct file *file, const char __user *userbuf, size_t count, loff_t *f_pos)
 {
-    ssize_t rc = 0;
     int write_size = 0;
-    struct dma_proxy_channel *pchannel_p = (struct dma_proxy_channel *)file->private_data;
+    struct dma_frontend *frontend = (struct dma_frontend *)file->private_data;
 
-    if (DMA_MEM_TO_DEV != pchannel_p->direction)
+    pr_debug("DMA write API is called with parameters: userbuf=0x%08p, count=%d, offset=%lld.\n", 
+                                                                        userbuf,
+                                                                        count,
+                                                                        *f_pos);
+
+    if (DMA_MEM_TO_DEV != frontend->direction)
     {
-        printk(KERN_ERR "%s: can't write, is an RX device\n", pchannel_p->name);
+        pr_err("Can't write, '%s' is an RX device.\n", frontend->name);
         return -EINVAL;
     }
 
-    rc = zcdma_write(pchannel_p->zcdma, userbuf, count);
+    write_size = zcdma_write(frontend->zcdma, userbuf, count);
+    pr_debug("zcdma_write return: %d.\n", write_size);
     if (write_size <= 0)
     {
-        printk(KERN_ERR "%s: can't write(), no data and timeout or error occurred\n", pchannel_p->name);
+        pr_err("Can't write() on channel '%s', no data and timeout or error occurred.\n", frontend->name);
         return -EPERM;
     }
     
-    rc = write_size;
-    return rc;
+    return (ssize_t)write_size;
 }
+
 
 static struct file_operations dma_zero_file_ops = {
     .owner    = THIS_MODULE,
@@ -277,49 +288,48 @@ static struct file_operations dma_zero_file_ops = {
 /**
  * @brief Create a character device interface for the given dma zero channel.
  * 
- * @param channel Channel to create a char device interface for.
+ * @param frontend Channel to create a char device interface for.
  * @return int 0 when no error occurs, error code otherwise 
  */
-static int cdevice_init(struct dma_frontend* channel)
+static int cdevice_init(struct dma_frontend* frontend)
 {
     int error_code;
-    char device_name[2 * MAX_NAME_LENG] = "dma_proxy";
 
     /* Allocate a major/minor chardev number region for 
      the new character device.
      */
-    error_code = alloc_chrdev_region(&channel->dev_node, 0, 1, "dma_proxy");
+    error_code = alloc_chrdev_region(&frontend->dev_node, 0, 1, DRIVER_NAME);
     if (error_code)
     {
         pr_err("Unable to get a char device number.\n");
         return error_code;
     }
 
-    /* Initialize the device data structure before registering the character 
+    /* Initialize the cdev structure then register the character 
      * device into the kernel.
      */
-    cdev_init(&channel->cdev, &dma_zero_file_ops);
-    channel->cdev.owner = THIS_MODULE;
-    error_code = cdev_add(&channel->cdev, channel->dev_node, 1);
+    cdev_init(&frontend->cdev, &dma_zero_file_ops);
+    frontend->cdev.owner = THIS_MODULE;
+    error_code = cdev_add(&frontend->cdev, frontend->dev_node, 1);
     if (error_code)
     {
-        pr_err("Unable to add char device\n");
+        pr_err("Unable to add char device.\n");
         goto init_error1;
     }
 
     /* Create the device node in /dev so the device is accessible
      * as a character device
      */
-    channel->char_device = device_create(
+    frontend->char_device = device_create(
             dma_char_device_class,  // class
             NULL,                   // parent device
-            channel->dev_node, // dev_t 
-            NULL,                   // drv_data
-            "%s", channel->name);
+            frontend->dev_node,     // dev_t 
+            (void*)frontend,        // drv_data
+            "%s", frontend->name);
 
-    if ((NULL==channel->char_device) && IS_ERR(channel->char_device))
+    if ((NULL==frontend->char_device) || IS_ERR(frontend->char_device))
     {
-        pr_err("Unable to create the device for the char device interface with name: '%s'\n",channel->name);
+        pr_err("Unable to create the device for the char device interface with name: '%s'\n",frontend->name);
         goto init_error2;
     }
 
@@ -327,16 +337,18 @@ static int cdevice_init(struct dma_frontend* channel)
 
 
 init_error2:
-    cdev_del(&channel->cdev);
+    cdev_del(&frontend->cdev);
 
 init_error1:
-    unregister_chrdev_region(channel->dev_node, 1);
+    unregister_chrdev_region(frontend->dev_node, 1);
     return error_code;
 }
 
 
-/* Exit the character device by freeing up the resources that it created and
- * disconnecting itself from the kernel.
+/**
+ * @brief Remove the character device interface for the given frontend.
+ * 
+ * @param frontend Frontend object to remove the char device interface for.
  */
 static void cdevice_deinit(struct dma_frontend* frontend)
 {
@@ -348,7 +360,7 @@ static void cdevice_deinit(struct dma_frontend* frontend)
 
         cdev_del(&frontend->cdev);
         memset(&frontend->cdev, 0, sizeof(frontend->cdev));
-        
+
         unregister_chrdev_region(frontend->dev_node, 1);
         frontend->dev_node = 0;
     }
@@ -356,106 +368,149 @@ static void cdevice_deinit(struct dma_frontend* frontend)
     return;
 }
 
-/* Create a DMA channel by getting a DMA channel from the DMA Engine and then setting
- * up the channel as a character device to allow user space control.
+
+/**
+ * @brief                   Create a frontend by getting a DMA channel from the DMA Engine and then setting
+ *                          up a character device to allow user space control.
+ *                          After this function the object is either fully initialized,
+ *                          or filled completely with 0.
+ * 
+ * @param frontend          Frontend to initialize.
+ * @param frontend_name     Name of the frontend.
+ * @param dma_channel       Dma cannel to be used by the frontend.
+ * @param direction         Direction of the dma channel.
+ * @return true             In case the initialization succeeds.
+ * @return false            In case of an error. In this case the frontend does not need to be uninitialized.
  */
-static bool frontend_init(   struct dma_frontend*    frontend, 
-                            struct dma_chan*            dma,
-                            u32                         direction   )
+static bool frontend_init(  struct dma_frontend*    frontend, 
+                            const char*             frontend_name,
+                            struct dma_chan*        dma_channel,
+                            u32                     direction   )
 {
+    bool init_error = false;
     int rc, bd;
-    struct dma_chan*        dma;
-    struct zcdma_hw_info    dma_channel_hw_info;
+    struct dma_chan*            dma;
+    struct dma_hw_channel_info  dma_channel_hw_info;
 
-    // Save the dma channel relevant data
-    strncpy(frontend->name, dma->name, MAX_NAME_LENG);
-    frontend->direction = direction;
-    frontend->timeout = TIMEOUT_DEFAULT_MSECS;
+    // Init the frontend parameters
+    strncpy(frontend->name, frontend_name, MAX_NAME_LENG);
 
-    
+    // Init the dma channel parameters
+    frontend->dma_channel = dma_channel;
+    frontend->direction = direction;    
 
     // Initialize a zerocopy engine for the given channel.
     dma_channel_hw_info.direction = direction;
-    dma_channel_hw_info.dma_chan = dma;
+    dma_channel_hw_info.dma_chan = dma_channel;
     frontend->zcdma = zcdma_alloc(&dma_channel_hw_info);
     if(NULL == frontend->zcdma)
     {
-        pr_error("Zerocopy engine initialization failed for dma channel '%s'.\n", name);
-        return false;
+        pr_error("Zerocopy engine initialization failed for frontend '%s'.\n", frontend_name);
+        init_error = true;
+        memset(frontend, 0, sizeof(*frontend));
     }
 
     // Initialize the character device for the dma channel
-    rc = cdevice_init(frontend);
-    if (0 != rc)
+    if(!init_error)
     {
-        return false;
+        rc = cdevice_init(frontend);
+        if (0 != rc)
+        {
+            init_error = true;
+            // revert the zcdma initialization
+            zcdma_free(frontend->zcdma);
+            memset(frontend, 0, sizeof(*frontend));
+        }
     }
 
-    return true;
+    return init_error;
 }
 
 
+/**
+ * @brief Deinitialize a frontend object.
+ *        It accepts both initialized and full 0 frontend objects.
+ * 
+ * @param frontend Object to deinitialize.
+ */
 static void frontend_deinit(struct dma_frontend* frontend)
 {
     // clean up the char device interface
-    frontend_deinit(frontend);
+    cdevice_deinit(frontend);
 
     // clean up the zcdma data
-    zcdma_free(frontend->zcdma);
-    frontend->zcdma = NULL;
+    if(NULL != frontend->zcdma)
+    {
+        zcdma_free(frontend->zcdma);
+    }
 
     // terminate all the dma transfers, and release the dma channel
-    dmaengine_terminate_sync(frontend->dma_channel);
-    dma_release_channel(frontend->dma_channel);
+    if(NULL != frontend->dma_channel)
+    {
+        dmaengine_terminate_sync(frontend->dma_channel);
+        dma_release_channel(frontend->dma_channel);
+    }
+
+    // clear all the data from the frontend object
+    memset(frontend, 0, sizeof(*frontend));
 
     return;
 }
 
 
 /**
- * @brief 
+ * @brief Try to initialize the driver for the given platform device.
  * 
- * @param pdev 
- * @return int 
+ * @param pdev Platform device to initialize the driver for.
+ * @return int Error code.
  */
 static int dma_manager_probe(struct platform_device *pdev)
 {
+    int ret = 0;
     int error_code, i;
-    struct device*              dev         =   &pdev->dev;
-    struct dma_manager*         manager     =   NULL;
-    struct dma_frontend*        frontend    =   NULL;
-    const char*                 dma_name    =   NULL;
-    struct dma_chan*            dma         =   NULL;
+    bool frontend_init_success                  =   false;
+    struct dma_manager*         manager         =   NULL;
+    struct dma_frontend*        frontend        =   NULL;
+    const char*                 frontend_name   =   NULL;
+    struct dma_chan*            dma_channel     =   NULL;
 
-    pr_info("Driver is initializing...\n");
+    if(NULL != pdev->name)
+    {
+        dev_info(&pdev->dev, "Probing the driver with the device '%s'...\n", pdev->name);
+    }
     
     // Allocate memory for the driver data and register it into the driver.
     manager = (struct dma_manager *) devm_kmalloc(&pdev->dev, sizeof(struct dma_manager), GFP_KERNEL);
     if (!manager) {		
-        dev_err(dev, "Cound not allocate DMA manager.\n");
+        dev_err(&pdev->dev, "Cound not allocate DMA manager.\n");
         return -ENOMEM;
     }
-    dev_set_drvdata(dev, manager);
+    dev_set_drvdata(&pdev->dev, (void*)manager);
     manager->platform_device = pdev;
 
-    // Figure out how many channels there are from the device tree based
-    // on the number of strings in the dma-names property-
+    // Figure out how many channels are there from the device tree
+    // based on the number of strings in the dma-names property.
     manager->frontend_count = device_property_read_string_array(&pdev->dev,
-                         "dma-names", NULL, 0);
+                                                                "dma-names", 
+                                                                NULL, 
+                                                                0);
     if (manager->frontend_count <= 0)
     {
+        dev_warn(&pdev->dev, "No DMA channels are defined for the manager.\n");
         return 0;
     }
-    pr_info("Device Tree Channel Count: %d\n", manager->frontend_count);
+    dev_info(&pdev->dev, "Device Tree Channel count: %d\n", manager->frontend_count);
 
     // Allocate the memory for channel names and then get the names
     // from the device tree.
     manager->frontend_names = devm_kmalloc_array(&pdev->dev, manager->frontend_count, 
-            sizeof(char *), GFP_KERNEL);
-    if (!manager->frontend_names)
+                                                    sizeof(char*), GFP_KERNEL);
+    if (NULL == manager->frontend_names)
     {
+        dev_err(&pdev->dev, "Cannot allocate memory for the frontend names.\n");
         return -ENOMEM;
     }
+
     error_code = device_property_read_string_array(
                     &pdev->dev, 
                     "dma-names", 
@@ -464,60 +519,80 @@ static int dma_manager_probe(struct platform_device *pdev)
                 );
     if (error_code < 0)
     {
-        pr_err("Could not get the dma channel names from the device tree.");
+        dev_err(&pdev->dev, "Could not get the dma channel names from the device tree.\n");
         return error_code;
     }
 
     //  Allocate the memory for the channel structures.
-    manager->frontends = devm_kmalloc(&pdev->dev,
-            sizeof(struct dma_frontend) * manager->frontend_count, GFP_KERNEL);
+    manager->frontends = devm_kmalloc(&pdev->dev, sizeof(struct dma_frontend) * manager->frontend_count, GFP_KERNEL);
     if (NULL == manager->frontends)
     {
+        dev_err(&pdev->dev, "Cannot allocate memory for the frontends.\n");
         return -ENOMEM;
     }
-
-    // Create the channels in the proxy. The direction does not matter
-    // as the DMA channel has it inside it and uses it, other than this will not work 
-    // for cyclic mode.
+    // clear the frontends, full 0 is a valid uninitialized state
+    memset(frontend, 0, sizeof(struct dma_frontend) * manager->frontend_count);
+    // Initialize a frontend for every specified dma channel.
     for (i = 0; i < manager->frontend_count; i++)
     {
-        dma_name = manager->frontend_names[i];        
+        frontend_name = manager->frontend_names[i];        
         frontend = &manager->frontends[i];
+        pr_debug("Initializing frontend for dma channel: '%s'.>\n", frontend_name);
         // Request the DMA channel from the DMA engine.
-        dma = dma_request_slave_channel(&manager->platform_device->dev, dma_name);
-        if (NULL == dma)
+        dma_channel = dma_request_chan(&manager->platform_device->dev, frontend_name);
+        if(IS_ERR(dma_channel))
         {
-            pr_err("Could not get the dma chanel with name '%s' from the dmaengine.\n", dma_name);
-            return false;
+            ret = PTR_ERR(dma_channel);
+            dev_err(&pdev->dev, "Could not get the dma chanel with name '%s' from the dmaengine, error:%d!\n",
+                        frontend_name,
+                        ret);
+            // terminate the init cycle
+            break;
         }
-        pr_info("Creating channel: '%s'\n", dma_name);
-        error_code = frontend_init( frontend,
-                                    dma,
-                                    DMA_MEM_TO_DEV);
-
-        if (0 != error_code)
+        else
         {
-            pr_error("Error ('%d') while creating frontend object for dma channel with name: '%s'\n",
-                error_code,
-                dma_name
-            );
-            return error_code;
-        } 
+            dev_info(&pdev->dev, "Initializing frontend '%s'.\n", frontend_name);
+            frontend_init_success = frontend_init(  frontend,
+                                                    frontend_name,
+                                                    dma_channel,
+                                                    DMA_MEM_TO_DEV);
+            if (false == frontend_init_success)
+            {
+                dev_err(&pdev->dev, "Error while creating frontend object for dma channel with name: '%s'\n",
+                    frontend_name
+                );
+                ret = -ENODEV;
+            } 
+        }
     }
 
-    // TODO internal test
-    return 0;
+    // error handling
+    if(0 != ret)
+    {
+        // We have encountered error during the frontend initializations,
+        // so clean up the half initialized frontend array.
+        for (i = 0; i < manager->frontend_count; i++)
+        {
+            frontend_deinit(&manager->frontends[i]);
+        }
+    }
+
+    return ret;
 }
  
-/* Exit the dma proxy device driver module.
+
+/**
+ * @brief Unload the driver for the given platform device.
+ * 
+ * @param pdev Platform device to deinit
  */
-static int dma_manager_remove(struct platform_device *pdev)
+static void dma_manager_remove(struct platform_device *pdev)
 {
     int i;
     struct device*      dev = &pdev->dev;
     struct dma_manager* manager = dev_get_drvdata(dev);
 
-    pr_info("Driver is unloading...\n");
+    dev_info(&pdev->dev, "Driver is unloading...\n");
 
     /* Take care of the char device infrastructure for each
      * channel except for the last channel. Handle the last
@@ -526,16 +601,20 @@ static int dma_manager_remove(struct platform_device *pdev)
     for (i = 0; i < manager->frontend_count; i++)
     {
         frontend_deinit(&manager->frontends[i]);
-        memset(&manager->frontends[i], 0, sizeof(manager->frontends[i]));
     }
 
-    return 0;
+    return;
 }
+
 
 static const struct of_device_id dma_manager_of_ids[] = {
     { .compatible = "xlnx,dma_manager",},
+    // ensure backward comptability with the dma proxy driver
+    // of xilinx
+    { .compatible = "xlnx,dma_proxy",},
     {}
 };
+
 
 static struct platform_driver dma_manager_driver = {
     .driver = {
@@ -548,10 +627,18 @@ static struct platform_driver dma_manager_driver = {
 };
 
 
-
+/**
+ * @brief Kernel module initializer, allocated a class for the
+ *          character device interface and registers the dma_manager
+ *          platform driver.
+ * 
+ * @return int 0 on success, ERROR otherwise.
+ */
 static int __init dma_manager_init(void)
 {
     int errorCode = 0;
+
+    pr_debug("Initializing the DMA manager module.");
 
     // Create a device class in the sysfs.
     // This will be used to create the individual devices for every dma channels.
@@ -562,15 +649,21 @@ static int __init dma_manager_init(void)
     }
     else
     {
-        errorCode = platform_driver_register(&dma_mamager_driver);
+        pr_debug("Registering the dma manager platform driver.");
+        errorCode = platform_driver_register(&dma_manager_driver);
     }
 
     return errorCode;    
 }
 
+
+/**
+ * @brief Module cleanup function.
+ * 
+ */
 static void __exit dma_manager_exit(void)
 {
-    platform_driver_unregister(&dma_mamager_driver);
+    platform_driver_unregister(&dma_manager_driver);
 
     if((NULL!= dma_char_device_class) && !IS_ERR(dma_char_device_class))
     {

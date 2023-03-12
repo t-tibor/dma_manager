@@ -35,7 +35,7 @@ enum transfer_result {
 
 struct zcdma {
     // DMA HW channel to use for the transfer
-    const struct zcdma_hw_info* hw;
+    struct dma_hw_channel_info hw;
 
     // Semaphore to protect the runtime data
     struct semaphore sem;
@@ -73,11 +73,17 @@ struct zcdma {
 };
 
 
+
+static void _dmaengine_callback_func(void* data);
+
+
+
+
 static int _set_target_memory(struct zcdma* cntx, 
         char __user* userbuf,
         size_t userbuf_len)
 {
-    pr_devel("Userbuf address: 0x%08X, length: %lu.", userbuf, userbuf_len);
+    pr_devel("Userbuf address: 0x%08p, length: %lu.", userbuf, userbuf_len);
 
     cntx->userbuf = userbuf;
     cntx->userbuf_len = userbuf_len;
@@ -96,7 +102,7 @@ static int _collect_pages(struct zcdma* cntx)
     cntx->userbuf_page_offset = offset_in_page(cntx->userbuf);
     // determine how many pages long the user memory is
     cntx->pages_cnt = (cntx->userbuf_page_offset + cntx->userbuf_len + PAGE_SIZE-1) / PAGE_SIZE;
-    pr_devel("Userbuffer page offset: %lu, page count: %lu", 
+    pr_devel("Userbuffer page offset: %u, page count: %u", 
         cntx->userbuf_page_offset,
         cntx->pages_cnt);
     // allocate kernel memory for the page pointers
@@ -117,7 +123,7 @@ static int _collect_pages(struct zcdma* cntx)
                 (ZCDMA_DIR_READ == cntx->hw->direction), // write
                 cntx->pages
             );
-    if( retval != cntx->pages )
+    if( retval != cntx->pages_cnt )
     {
         pr_err("get_user_pages_fast() returned %d, expected %lu\n",
             retval, cntx->pages_cnt);
@@ -312,7 +318,7 @@ static void _dmaengine_callback_func(void* data)
     }
     // else: something does not add up...
 
-    spin_lock_irqrestore(&cntx->state_lock, iflags);
+    spin_unlock_irqrestore(&cntx->state_lock, iflags);
 
     return;
 }
@@ -394,7 +400,7 @@ static int _check_not_in_flight(struct zcdma* cntx)
 }
 
 
-static int cleanup_transfer_data( struct zcdma* cntx)
+static void cleanup_transfer_data( struct zcdma* cntx)
 {
     pr_devel("Unpreparing zerocopy operation.");
 
@@ -600,8 +606,8 @@ static bool zcdma_init( struct zcdma*  cntx,
         dma_hw_info->dma_chan->name
         );
 
-    // Save a reference to the dma channel we want to use for the transfer.
-    cntx->hw = dma_hw_info;
+    // Copy the dma channel parameters we want to use.
+    cntx->hw = *dma_hw_info;
 
     // init the internal objects
     spin_lock_init(&cntx->state_lock);
