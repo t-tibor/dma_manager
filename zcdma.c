@@ -10,6 +10,16 @@
 
 #include <zcdma.h>
 
+
+#define TRANSFER_RESULT_IS_OK(result_enm) ( TRANSFER_RESULT_OK == (result_enm) )
+#define TRANSFER_RESULT_IS_NOK(result_enm) ( TRANSFER_RESULT_OK != (result_enm) )
+
+#define ZCDMA_DIR_TO_TRANFER_DIR(dir)     ( (ZCDMA_DIR_READ==(dir))?(DMA_DEV_TO_MEM):(DMA_MEM_TO_DEV) )
+#define ZCDMA_DIR_TO_DATA_DIR(dir)        ( (ZCDMA_DIR_READ==(dir))?(DMA_FROM_DEVICE):(DMA_TO_DEVICE) )
+
+#define DMA_TIMEOUT ((unsigned long)10) /* TODO verify it!!!*/
+
+
 /* Right now the I/O concept is very simple -- all reads and writes
  * are blocking, and concurrent reads and writes are not allowed.
  * Concurrent open is also disallowed.
@@ -27,11 +37,6 @@ enum transfer_result {
     TRANSFER_RESULT_ERROR,
 };
 
-#define TRANSFER_RESULT_IS_OK(result_enm) ( TRANSFER_RESULT_OK == (result_enm) )
-#define TRANSFER_RESULT_IS_NOK(result_enm) ( TRANSFER_RESULT_OK != (result_enm) )
-
-#define ZCDMA_DIR_TO_TRANFER_DIR(dir)     ( (ZCDMA_DIR_READ==(dir))?(DMA_DEV_TO_MEM):(DMA_MEM_TO_DEV) )
-#define ZCDMA_DIR_TO_DATA_DIR(dir)        ( (ZCDMA_DIR_READ==(dir))?(DMA_FROM_DEVICE):(DMA_TO_DEVICE) )
 
 struct zcdma {
     // DMA HW channel to use for the transfer
@@ -76,17 +81,45 @@ struct zcdma {
 
 static void _dmaengine_callback_func(void* data);
 
+// --------------------------------------------------------------------- Local function declarations ---------------------------------------------------------------------
+static void _set_target_memory(struct zcdma* cntx, 
+        char __user* userbuf,
+        size_t userbuf_len);
+static int _collect_pages(struct zcdma* cntx);  
+static int _build_sgtable(  struct zcdma* cntx );   
+static int _map_sgtable( struct zcdma*   cntx    );
+static int _prepare_slave_sg(struct zcdma* cntx );
+static int _start(  struct zcdma* cntx  );
+static void _dmaengine_callback_func(void* data);
+static void _unmap_sgtable( struct zcdma* cntx  );
+static void _deinit_sgtable( struct zcdma* cntx );
+static void _release_pages( struct zcdma* const cntx);
+static void cleanup_transfer_data( struct zcdma* cntx);
+static int start_dma_transfer(  struct zcdma* cntx,
+                                char __user* userbuf,
+                                size_t count                        );
+static enum transfer_result wait_transfer(struct zcdma* cntx);         
+static ssize_t start_and_wait_transfer( struct zcdma* cntx,
+                                        char __user* userbuf,
+                                        size_t count            );
+static bool zcdma_lock( struct zcdma* cntx );
+static void zcdma_unlock( struct zcdma* cntx );
+static bool zcdma_init( struct zcdma*  cntx,
+                        const struct dma_hw_channel_info* const   dma_hw_info);
+static void zcdma_deinit(struct zcdma* session);
 
 
-
-static int _set_target_memory(struct zcdma* cntx, 
+// --------------------------------------------------------------------- Local function definitions ---------------------------------------------------------------------
+static void _set_target_memory(struct zcdma* cntx, 
         char __user* userbuf,
         size_t userbuf_len)
 {
-    pr_devel("Userbuf address: 0x%08p, length: %lu.", userbuf, userbuf_len);
+    pr_devel("Userbuf address: 0x%p, length: %lu.", userbuf, userbuf_len);
 
     cntx->userbuf = userbuf;
     cntx->userbuf_len = userbuf_len;
+
+    return;
 }
 
 
@@ -102,7 +135,7 @@ static int _collect_pages(struct zcdma* cntx)
     cntx->userbuf_page_offset = offset_in_page(cntx->userbuf);
     // determine how many pages long the user memory is
     cntx->pages_cnt = (cntx->userbuf_page_offset + cntx->userbuf_len + PAGE_SIZE-1) / PAGE_SIZE;
-    pr_devel("Userbuffer page offset: %u, page count: %u", 
+    pr_devel("Userbuffer page offset: %u, covered page count: %u", 
         cntx->userbuf_page_offset,
         cntx->pages_cnt);
     // allocate kernel memory for the page pointers
@@ -116,16 +149,16 @@ static int _collect_pages(struct zcdma* cntx)
         goto err;
     }
 
-    // Get the page structures
+    /* Pin the user pages in the memory. */
     retval = get_user_pages_fast(
                 (unsigned long)cntx->userbuf,    // start
                 cntx->pages_cnt,
-                (ZCDMA_DIR_READ == cntx->hw->direction), // write
+                (ZCDMA_DIR_READ == cntx->hw.direction), // write
                 cntx->pages
             );
     if( retval != cntx->pages_cnt )
     {
-        pr_err("get_user_pages_fast() returned %d, expected %lu\n",
+        pr_err("get_user_pages_fast() returned %d, expected %u\n",
             retval, cntx->pages_cnt);
         goto err;
     }
@@ -154,6 +187,9 @@ static int _build_sgtable(  struct zcdma* cntx )
     size_t len;   
     size_t offset;
     size_t left_to_map;
+
+
+    pr_devel("Building scatter-gather table.");
 
     // Allocate a scatter-gather table
     retval = sg_alloc_table( &cntx->sg_table, cntx->pages_cnt, GFP_KERNEL );
@@ -189,6 +225,7 @@ static int _build_sgtable(  struct zcdma* cntx )
                 pr_debug("Last page length: %lu.", left_to_map);
             }
 
+            pr_debug("Scatter list settings: Page idx %d: offset: %lu, length: %lu.", idx, offset, len);
             sg_set_page(sg, cntx->pages[idx], len, offset);
 
             left_to_map -= len;
@@ -217,14 +254,17 @@ static int _map_sgtable( struct zcdma*   cntx    )
 {
     int                     retval = 0;
     int                     mapped_page_cnt;
-    struct device* const    dma_dev = dmaengine_get_dma_device(cntx->hw->dma_chan);
-    
+    struct device* const    dma_dev = dmaengine_get_dma_device(cntx->hw.dma_chan);
+
+
+    pr_debug("Mapping SG table.");
+
     if( false != cntx->sg_table_is_allocated )
     {   
         mapped_page_cnt = dma_map_sg(dma_dev, 
                             cntx->sg_table.sgl, 
                             cntx->pages_cnt,
-                            ZCDMA_DIR_TO_DATA_DIR(cntx->hw->direction)
+                            ZCDMA_DIR_TO_DATA_DIR(cntx->hw.direction)
                             );
         if(mapped_page_cnt != cntx->pages_cnt)
         {
@@ -239,6 +279,11 @@ static int _map_sgtable( struct zcdma*   cntx    )
             pr_debug("SG table mapped successfully.");
         }
     }
+    else
+    {
+        pr_err("SG table is not allocated when mapping was requested.");
+        retval = -ENOMEM;
+    }
 
     return retval;
 }
@@ -251,11 +296,12 @@ static int _prepare_slave_sg(struct zcdma* cntx )
 {
     int retval = 0;
 
+    pr_debug("Preparing descriptor for the DMA transaction.");
     cntx->tx_descriptor = dmaengine_prep_slave_sg(
-                        cntx->hw->dma_chan,
+                        cntx->hw.dma_chan,
                         cntx->sg_table.sgl,
                         cntx->pages_cnt,
-                        ZCDMA_DIR_TO_TRANFER_DIR(cntx->hw->direction),
+                        ZCDMA_DIR_TO_TRANFER_DIR(cntx->hw.direction),
                         DMA_PREP_INTERRUPT
                         );    // requenst an interrupt 
 
@@ -281,23 +327,39 @@ static int _start(  struct zcdma* cntx  )
 {
     int retval = 0;
 
-    spin_lock_irq(&cntx->state_lock);
-
-    cntx->cookie = dmaengine_submit(cntx->tx_descriptor);
-    if( cntx->cookie < DMA_MIN_COOKIE )
+    if (likely(NULL != cntx->tx_descriptor))
     {
-        pr_err("dmaengine_submit() returned %d\n", cntx->cookie);
-        retval = -EINVAL;      
-        cntx->state = DMA_IDLE;
-    }
-    else
-    {
-        cntx->state = DMA_IN_FLIGHT;
-        dma_async_issue_pending(cntx->hw->dma_chan);
-        pr_debug("DMA transfer started.");
-    }
+        pr_debug("Submitting DMA transaction descriptor.");
 
-    spin_unlock(&cntx->state_lock);
+        spin_lock_irq(&cntx->state_lock);
+
+        // Once the descriptor has been prepared and the callback information added, it must be placed on the DMA engine drivers pending queue.
+        // This returns a cookie can be used to check the progress of DMA engine activity via other DMA engine calls not covered in this document.
+        // dmaengine_submit() will not start the DMA operation, it merely adds it to the pending queue.
+        cntx->cookie = dmaengine_submit(cntx->tx_descriptor);
+        if (cntx->cookie < DMA_MIN_COOKIE)
+        {
+            pr_err("dmaengine_submit() returned %d\n", cntx->cookie);
+            retval = -EINVAL;
+            cntx->state = DMA_IDLE;
+        }
+        else
+        {
+            // After calling dmaengine_submit() the submitted transfer descriptor (struct dma_async_tx_descriptor) belongs to the DMA engine.
+            // Consequently, the client must consider invalid the pointer to that descriptor.
+            cntx->tx_descriptor = NULL;
+            cntx->state = DMA_IN_FLIGHT;
+            // Issue pending DMA requests and wait for callback notification
+            // The transactions in the pending queue can be activated by calling the issue_pending API.
+            // If channel is idle then the first transaction in queue is started and subsequent ones queued up.
+            // On completion of each DMA operation, the next in queue is started and a tasklet triggered.
+            // The tasklet will then call the client driver completion callback routine for notification, if set.
+            dma_async_issue_pending(cntx->hw.dma_chan);
+            pr_debug("DMA transfer started.");
+        }
+
+        spin_unlock(&cntx->state_lock);
+    }
 
     return retval;
 }
@@ -325,7 +387,7 @@ static void _dmaengine_callback_func(void* data)
 
 static void _unmap_sgtable( struct zcdma* cntx  )
 {
-    struct device* const dma_dev = dmaengine_get_dma_device(cntx->hw->dma_chan);
+    struct device* const dma_dev = dmaengine_get_dma_device(cntx->hw.dma_chan);
 
     if( false != cntx->sg_table_is_mapped )
     {
@@ -333,7 +395,7 @@ static void _unmap_sgtable( struct zcdma* cntx  )
         dma_unmap_sg(dma_dev,
             cntx->sg_table.sgl,
             cntx->pages_cnt,
-            ZCDMA_DIR_TO_DATA_DIR(cntx->hw->direction)
+            ZCDMA_DIR_TO_DATA_DIR(cntx->hw.direction)
             );
 
         cntx->sg_table_is_mapped = false;
@@ -380,14 +442,15 @@ static void _release_pages( struct zcdma* const cntx)
     {
         kfree(cntx->pages);
         cntx->pages = NULL;
-
-        cntx->pages_cnt = 0;
     }
+    
+    cntx->pages_cnt = 0;
 
     return;
 }
 
 
+#if 0
 static int _check_not_in_flight(struct zcdma* cntx)
 {
     int retval;
@@ -398,16 +461,15 @@ static int _check_not_in_flight(struct zcdma* cntx)
 
     return retval;
 }
+#endif
 
 
 static void cleanup_transfer_data( struct zcdma* cntx)
 {
-    pr_devel("Unpreparing zerocopy operation.");
+    pr_devel("Cleaning up transfer data.");
 
     _unmap_sgtable(cntx);
-
     _deinit_sgtable(cntx);
-
     // Release the collected pages. 
     // Also mark the pages as dirty to make sure that the cache is refreshed before 
     // the CPU tries to access it.
@@ -427,7 +489,6 @@ static int start_dma_transfer(  struct zcdma* cntx,
                                 size_t count                        )
 {
     int retval = 0;
-
 
 
     // Saving the target memory block that the DMA operation should use.
@@ -476,17 +537,22 @@ static int start_dma_transfer(  struct zcdma* cntx,
         goto err;
     }
 
+
 err:
     if( 0 != retval )
     {
         pr_err("Reverting zerocopy prepare operation.");
         cleanup_transfer_data(cntx);
     }
+    else
+    {
+        pr_debug("DMA transfer started.");
+    }
 
     return retval;
 }    
 
-#define DMA_TIMEOUT ((unsigned long)10) /* TODO verify it!!!*/
+
 static enum transfer_result wait_transfer(struct zcdma* cntx)
 {
     enum transfer_result retval;
@@ -499,7 +565,7 @@ static enum transfer_result wait_transfer(struct zcdma* cntx)
     pr_debug("Waiting for dma transfer completion ended. Remaining timeout: %lu.", remaining_timeout);
 
     // check the result of the dma transfer
-    status = dmaengine_tx_status(cntx->hw->dma_chan, cntx->cookie, &state);
+    status = dmaengine_tx_status(cntx->hw.dma_chan, cntx->cookie, &state);
     if(0 == remaining_timeout)
     {
         pr_warn("DMA timed out... Status: %d, residue: %lu.", (int)status, (unsigned long)state.residue);
@@ -522,6 +588,15 @@ static enum transfer_result wait_transfer(struct zcdma* cntx)
 }
 
 
+/**
+ * @brief This function starts the DMA transfer and waits for it to finish.
+ * It returns the number of bytes that were actually transferred.
+ * 
+ * @param cntx      The context of the driver.
+ * @param userbuf   The user buffer that should be used for the transfer.
+ * @param count     The number of bytes that should be transferred.
+ * @return ssize_t  The number of bytes that were actually transferred.
+ */
 static ssize_t start_and_wait_transfer( struct zcdma* cntx,
                                         char __user* userbuf,
                                         size_t count            )
@@ -541,18 +616,19 @@ static ssize_t start_and_wait_transfer( struct zcdma* cntx,
         }
         else
         {
-            pr_error("Read operation failed. Could not wait for the transfer to finish. Error code: %d.\n", (int)wait_retval);
+            pr_err("Read operation failed. Could not wait for the transfer to finish. Error code: %d.\n", (int)wait_retval);
             retval = -EIO;
         }
     }
     else
     {
-        pr_error("Read operation failed. Coult not start the dma transfer. Error code: %d.\n", (int)start_retval);
+        pr_err("Read operation failed. Could not start the dma transfer. Error code: %d.\n", (int)start_retval);
         retval = -EIO;
     }
 
     return retval;
 }
+
 
 /// @brief Lock the given zcdma context to get unique access to the internal members.
 /// @param cntx   Context to lock.
@@ -574,27 +650,13 @@ static void zcdma_unlock( struct zcdma* cntx )
 }
 
 
-struct zcdma* zcdma_alloc(const struct dma_hw_channel_info* const hw_info)
-{
-    struct zcdma* retval;
-
-    retval = (struct zcdma*)kmalloc(sizeof(struct zcdma), GFP_KERNEL);
-    if( NULL != retval )
-    {        
-        zcdma_init(retval, hw_info);
-    }
-
-    return retval;
-}
-
-
 /// @brief  Initialize the given zerocopy context.
 ///         This shall be called before using any other zerocopy function.
 /// @param cntx     Zerocopy context to initialize.
 /// @param dma_hw_info  Pointer to a structure containing info about
 ///                     the DMA HW channel to be used for the zerocopy transfer later.
 static bool zcdma_init( struct zcdma*  cntx,
-                        const struct zcdma_hw_info* const   dma_hw_info)
+                        const struct dma_hw_channel_info* const   dma_hw_info)
 {
     bool init_success = true;
 
@@ -617,11 +679,53 @@ static bool zcdma_init( struct zcdma*  cntx,
     return init_success;
 }
 
+
+/// @brief Deinitialize a zcdma session.
+///        It will free all the allocated resources.
+/// @param session Session to deinit.
+static void zcdma_deinit(struct zcdma* session)
+{
+    const struct dma_hw_channel_info* hw_info = &session->hw;
+
+    pr_info("Deinitializing a zerocopy dma context with direction: %d. "
+        "Dma channel Id:%d. "
+        "Dma channel name: %s. ",    
+        (int)hw_info->direction,
+        hw_info->dma_chan->chan_id,
+        hw_info->dma_chan->name
+        );
+
+    // stop the dma channel
+    dmaengine_terminate_sync(session->hw.dma_chan);
+
+    // free the allocated resources
+    cleanup_transfer_data(session);
+
+    return;
+}
+
+
+// --------------------------------------------------------------------- Public function definitions ---------------------------------------------------------------------
+
+struct zcdma* zcdma_alloc(const struct dma_hw_channel_info* const hw_info)
+{
+    struct zcdma* retval;
+
+    retval = (struct zcdma*)kmalloc(sizeof(struct zcdma), GFP_KERNEL);
+    if( NULL != retval )
+    {        
+        zcdma_init(retval, hw_info);
+    }
+
+    return retval;
+}
+
+
 ssize_t zcdma_read(struct zcdma* cntx, char __user* userbuf, size_t len)
 {
     ssize_t retval = 0;
 
-    if(ZCDMA_DIR_READ == cntx->hw->direction)
+    if(ZCDMA_DIR_READ == cntx->hw.direction)
     {
         // get a unique access to the context, 
         // so that no other transfers run in parallel
@@ -637,8 +741,8 @@ ssize_t zcdma_read(struct zcdma* cntx, char __user* userbuf, size_t len)
             pr_err("DMA read error: cannot lock the dma channel. "
                 "Name of the DMA channel: %s. "
                 "Direction of the DMA channel: %d. ",
-                cntx->hw->dma_chan->name,
-                cntx->hw->direction
+                cntx->hw.dma_chan->name,
+                cntx->hw.direction
             );            
             retval = -ERESTARTSYS;
         }
@@ -648,8 +752,8 @@ ssize_t zcdma_read(struct zcdma* cntx, char __user* userbuf, size_t len)
         pr_err("DMA read error: cannot read from a non-read channel. "
             "Name of the DMA channel: %s. "
             "Direction of the DMA channel: %d. ",
-            cntx->hw->dma_chan->name,
-            cntx->hw->direction
+            cntx->hw.dma_chan->name,
+            cntx->hw.direction
         );
         retval = -EINVAL;
     }
@@ -660,13 +764,14 @@ ssize_t zcdma_read(struct zcdma* cntx, char __user* userbuf, size_t len)
 ssize_t zcdma_write(struct zcdma* cntx, const char __user* userbuf, size_t len)
 {
     ssize_t retval = 0;
+    char __user* volatile_userbuf = (char __user*)userbuf; // cast away the const, the DMA won't modify the buffer
 
-    if(ZCDMA_DIR_WRITE == cntx->hw->direction)
+    if(ZCDMA_DIR_WRITE == cntx->hw.direction)
     {   
         if( false != zcdma_lock(cntx) )
         {
             // start the dma transfer and wait until it finishes
-            retval = start_and_wait_transfer(cntx, userbuf, len);
+            retval = start_and_wait_transfer(cntx, volatile_userbuf, len);
 
             zcdma_unlock(cntx);
         }
@@ -675,8 +780,8 @@ ssize_t zcdma_write(struct zcdma* cntx, const char __user* userbuf, size_t len)
             pr_err("DMA read error: cannot lock the dma channel. "
                 "Name of the DMA channel: %s. "
                 "Direction of the DMA channel: %d. ",
-                cntx->hw->dma_chan->name,
-                cntx->hw->direction
+                cntx->hw.dma_chan->name,
+                cntx->hw.direction
             );
             retval = -ERESTARTSYS;
         }
@@ -686,8 +791,8 @@ ssize_t zcdma_write(struct zcdma* cntx, const char __user* userbuf, size_t len)
         pr_err("DMA write error: cannot write to a non-write channel. "
             "Name of the DMA channel: %s. "
             "Direction of the DMA channel: %d. ",
-            cntx->hw->dma_chan->name,
-            cntx->hw->direction
+            cntx->hw.dma_chan->name,
+            cntx->hw.direction
         );
         retval = -EINVAL;
     }
@@ -696,35 +801,12 @@ ssize_t zcdma_write(struct zcdma* cntx, const char __user* userbuf, size_t len)
 }
 
 
-/// @brief Deinitialize a zcdma session.
-///        It will free all the allocated resources.
-/// @param session Session to deinit.
-static void zcdma_deinit(struct zcdma* session)
-{
-    const struct zcdma_hw_info* hw_info = session->hw;
-
-    pr_info("Deinitializing a zerocopy dma context with direction: %d. "
-        "Dma channel Id:%d. "
-        "Dma channel name: %s. ",    
-        (int)hw_info->direction,
-        hw_info->dma_chan->chan_id,
-        hw_info->dma_chan->name
-        );
-
-    dmaengine_terminate_sync(session->hw->dma_chan);
-
-    cleanup_transfer_data(session);
-
-    return;
-}
-
-
 void zcdma_free(struct zcdma* session)
 {
     if( NULL != session )
     {
         zcdma_deinit(session);
-        free(session);
+        kfree(session);
     }
 
     return;
