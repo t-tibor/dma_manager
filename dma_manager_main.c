@@ -98,32 +98,22 @@ module_param(internal_test, int, S_IRUGO);
 
 // ------------------ Function definitions ------------------
 
-/* Open the device file and set up the data pointer to the proxy channel data for the
- * proxy channel such that the ioctl function can access the data structure later.
+/* Open the file descriptor of the character device device
+ * and get the driver specific DMA frontend structure.
  */
-static int local_open(struct inode *ino, struct file *file)
+static int local_open(struct inode *inode, struct file *f)
 {
-    /* Get the channel pointer from the inode */
-    file->private_data = container_of(ino->i_cdev, struct dma_frontend, cdev);
+    // Extract our driver specific structure from the character device data.
+    file->private_data = container_of(inode->i_cdev, struct dma_frontend, cdev);
 
     return 0;
 }
 
-/* Close the file and there's nothing to do for it
+/* Release thefile descriptor of the character device.
  */
-static int release(struct inode *ino, struct file *file)
+static int release(struct inode *inode, struct file *f)
 {
-#if 0
-    struct dma_frontend *pchannel_p = (struct dma_frontend *)file->private_data;
-    struct dma_device *dma_device = pchannel_p->channel_p->device;
-
-    /* Stop all the activity when the channel is closed assuming this
-     * may help if the application is aborted without normal closure
-     * This is not working and causes an issue that may need investigation in the 
-     * DMA driver at the lower level.
-     */
-    dma_device->device_terminate_all(pchannel_p->channel_p);
-#endif
+    // TODO: Any cleanup operation???
     return 0;
 }
 
