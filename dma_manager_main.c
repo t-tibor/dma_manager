@@ -1,106 +1,8 @@
 /**
- * Copyright (C) 2021 Xilinx, Inc
- *
- * Licensed under the Apache License, Version 2.0 (the "License"). You may
- * not use this file except in compliance with the License. A copy of the
- * License is located at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
- * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
- * License for the specific language governing permissions and limitations
- * under the License.
- */
-
-/* DMA Proxy
- *
- * This module is designed to be a small example of a DMA device driver that is
- * a client to the DMA Engine using the AXI DMA / MCDMA driver. It serves as a proxy
- * for kernel space DMA control to a user space application.
- *
- * A zero copy scheme is provided by allowing user space to mmap a kernel allocated
- * memory region into user space, referred to as a set of channel buffers. Ioctl functions 
- * are provided to start a DMA transfer (non-blocking), finish a DMA transfer (blocking) 
- * previously started, or start and finish a DMA transfer blocking until it is complete.
- * An input argument which specifies a channel buffer number (0 - N) to be used for the
- * transfer is required.
- *
- * By default the kernel memory allocated for user space mapping is going to be 
- * non-cached at this time. Non-cached memory is pretty slow for the application.
- * A h/w coherent system for MPSOC has been tested and is recommended for higher
- * performance applications. 
- *
- * Hardware coherency requires the following items in the system as documented on the 
- * Xilinx wiki and summarized below::
- *   The AXI DMA read and write channels AXI signals must be tied to the correct state to
- *    generate coherent transactions.
- *   An HPC slave port on MPSOC is required
- *   The CCI of MPSOC must be initialized prior to the APU booting Linux
- *   A dma-coherent property is added in the device tree for the proxy driver.
- *
- * There is an associated user space application, dma_proxy_test.c, and dma_proxy.h
- * that works with this device driver.
- *
- * The hardware design was tested with an AXI DMA / MCDMA  with scatter gather and
- * with the transmit channel looped back to the receive channel. It should
- * work with or without scatter gather as the scatter gather mentioned in the 
- * driver is only at the s/w framework level rather than in the hw.
- *
- * This driver is character driver which creates devices that user space can
- * access for each DMA channel, such as /dev/dma_proxy_rx and /dev/dma_proxy_tx.
- * The number and names of channels are taken from the device tree.
- * Multiple instances of the driver (with multiple IPs) are also supported.
-
- * An internal test mode is provided to allow it to be self testing without the 
- * need for a user space application and this mode is good for making bigger
- * changes to this driver.
- *
- * This driver is designed to be simple to help users get familiar with how to 
- * use the DMA driver provided by Xilinx which uses the Linux DMA Engine. 
- *
- * To use this driver a node must be added into the device tree.  Add a 
- * node similar to the examples below adjusting the dmas property to match the
- * name of the AXI DMA / MCDMA node.
+ * Zero-copy DMA driver
+ * Copyright (C) 2023-2024 Tibor Tusori
  * 
- * The dmas property contains pairs with the first of each pair being a reference
- * to the DMA IP in the device tree and the second of each pair being the
- * channel of the DMA IP. For the AXI DMA IP the transmit channel is always 0 and
- * the receive is always 1. For the AXI MCDMA IP the 1st transmit channel is
- * always 0 and receive channels start at 16 since there can be a maximum of 16
- * transmit channels. Each name in the dma-names corresponds to a pair in the dmas
- * property and is only a logical name that allows user space access to the channel
- * such that the name can be any name as long as it is unique.
- *
- *	For h/w coherent systems with MPSoC, the property dma-coherent can be added
- * to the node in the device tree. 
- * 
- * Example device tree nodes: 
- *
- * For AXI DMA with transmit and receive channels with a loopback in hardware
- * 
- * dma_proxy {
- *   compatible ="xlnx,dma_proxy";
- *   dmas = <&axi_dma_1_loopback 0  &axi_dma_1_loopback 1>;
- *   dma-names = "dma_proxy_tx", "dma_proxy_rx";
- * };
- *
- * For AXI DMA with only the receive channel
- * 
- * dma_proxy2 {
- *   compatible ="xlnx,dma_proxy";
- *   dmas = <&axi_dma_0_noloopback 1>;
- *   dma-names = "dma_proxy_rx_only";
- * };
- *
- * For AXI MCDMA with two channels 
- *
- * dma_proxy3 {
- *   compatible ="xlnx,dma_proxy";
- *   dmas = <&axi_mcdma_0 0  &axi_mcdma_0 16 &axi_mcdma_0 1 &axi_mcdma_0 17> ;
- *   dma-names = "dma_proxy_tx_0", "dma_proxy_rx_0", "dma_proxy_tx_1", "dma_proxy_rx_1";
- * };
+ * SPDX-License-Identifier: GPL-2.0
  */
 
 // Override the fmt string preprocessor, so that every
@@ -123,7 +25,6 @@
 // Zero copy DMA backend
 #include <zcdma.h>
 
-MODULE_LICENSE("GPL");
 
 // ------------------ Local constants ------------------
 #define DRIVER_NAME 			"dma_manager"

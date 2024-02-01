@@ -1,3 +1,10 @@
+/**
+ * Zero-copy DMA driver
+ * Copyright (C) 2023-2024 Tibor Tusori
+ * 
+ * SPDX-License-Identifier: GPL-2.0
+ */
+
 // Override the fmt string preprocessor, so that every
 // log message contains the module name.
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt

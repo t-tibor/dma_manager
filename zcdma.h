@@ -1,3 +1,10 @@
+/**
+ * Zero-copy DMA driver
+ * Copyright (C) 2023-2024 Tibor Tusori
+ * 
+ * SPDX-License-Identifier: GPL-2.0
+ */
+
 #ifndef USERMEM_DMA_H
 #define USERMEM_DMA_H
 
