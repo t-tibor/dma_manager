@@ -122,7 +122,7 @@ static int release(struct inode *inode, struct file *f)
 static ssize_t read(struct file *f, char __user *userbuf, size_t count, loff_t *f_pos)
 {
     int read_size = 0;
-    struct dma_frontend* frontend = (struct dma_frontend *)private_data;
+    struct dma_frontend* frontend = (struct dma_frontend *)f->private_data;
 
     pr_debug("DMA read API is called with parameters: userbuf=0x%p, count=%lu, offset=%lld.\n", 
                                                                         userbuf,
