@@ -1,15 +1,23 @@
+#
+# Out-of-tree Makefile for building driver.
+#
+
 obj-m += dma_manager_main.o zcdma.o
 
-PWD ?= $(shell pwd)
-KERNEL_SRC ?= /lib/modules/$(shell uname -r)/build
+ifdef KERNEL_SRC
+    KERNEL_SRC_DIR := $(KERNEL_SRC)
+else
+    KERNEL_SRC_DIR ?= /lib/modules/$(shell uname -r)/build
+endif
 
+#
+# For out of kernel tree rules
+#
 all:
-	$(MAKE) -C $(KERNEL_SRC) M=$(PWD)
+	$(MAKE) -C $(KERNEL_SRC_DIR) M=$(PWD) modules
 
 modules_install:
-	$(MAKE) -C $(KERNEL_SRC) M=$(PWD) modules_install
+	$(MAKE) -C $(KERNEL_SRC_DIR) M=$(PWD) modules_install
 
 clean:
-	rm -f *.o *~ core .depend .*.cmd *.ko *.mod *.mod.c
-	rm -f Module.markers Module.symvers modules.order
-	rm -rf .tmp_versions Modules.symvers
+	$(MAKE) -C $(KERNEL_SRC_DIR) M=$(PWD) clean
