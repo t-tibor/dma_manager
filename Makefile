@@ -8,6 +8,8 @@ dma_manager-y := dma_manager_main.o zcdma.o
 # Add the current directory to the include path
 ccflags-y := -I$(src)
 
+PWD ?= $(shell pwd)
+
 ifdef KERNEL_SRC
     KERNEL_SRC_DIR := $(KERNEL_SRC)
 else
