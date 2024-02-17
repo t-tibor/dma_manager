@@ -104,7 +104,7 @@ module_param(internal_test, int, S_IRUGO);
 static int local_open(struct inode *inode, struct file *f)
 {
     // Extract our driver specific structure from the character device data.
-    file->private_data = container_of(inode->i_cdev, struct dma_frontend, cdev);
+    f->private_data = container_of(inode->i_cdev, struct dma_frontend, cdev);
 
     return 0;
 }
@@ -119,10 +119,10 @@ static int release(struct inode *inode, struct file *f)
 
 /* Read data from the DMA channel. The data is copied directly into the user buffer.
  */
-static ssize_t read(struct file *file, char __user *userbuf, size_t count, loff_t *f_pos)
+static ssize_t read(struct file *f, char __user *userbuf, size_t count, loff_t *f_pos)
 {
     int read_size = 0;
-    struct dma_frontend* frontend = (struct dma_frontend *)file->private_data;
+    struct dma_frontend* frontend = (struct dma_frontend *)private_data;
 
     pr_debug("DMA read API is called with parameters: userbuf=0x%p, count=%lu, offset=%lld.\n", 
                                                                         userbuf,
@@ -150,10 +150,10 @@ static ssize_t read(struct file *file, char __user *userbuf, size_t count, loff_
 /* Write data to the DMA channel. The data is copied from the user buffer to the DMA buffer
  * and the DMA buffer is then submitted to the DMA channel.
  */
-static ssize_t write(struct file *file, const char __user *userbuf, size_t count, loff_t *f_pos)
+static ssize_t write(struct file *f, const char __user *userbuf, size_t count, loff_t *f_pos)
 {
     int write_size = 0;
-    struct dma_frontend *frontend = (struct dma_frontend *)file->private_data;
+    struct dma_frontend *frontend = (struct dma_frontend *)f->private_data;
 
     pr_debug("DMA write API is called with parameters: userbuf=0x%p, count=%lu, offset=%lld.\n", 
                                                                         userbuf,
