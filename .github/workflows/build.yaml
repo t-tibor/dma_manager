@@ -2,11 +2,10 @@ name: Build Kernel Module
 on:
   push:
     branches:
-      - master
-      - github_actions
+      - '*'
   pull_request:
     branches:
-      - master
+      - '*'
 jobs:
   build:
     runs-on: ubuntu-latest
