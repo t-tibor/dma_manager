@@ -11,6 +11,9 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@master
+        with:
+          fetch-depth: 1
       - name: Install Dependencies
         run: sudo apt-get update && sudo apt-get install -y build-essential linux-headers-$(uname -r)
       - name: Build Kernel Module
