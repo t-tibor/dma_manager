@@ -1,0 +1,17 @@
+name: Build Kernel Module
+on:
+  push:
+    branches:
+      - master
+      - github_actions
+  pull_request:
+    branches:
+      - master
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Dependencies
+        run: sudo apt-get update && sudo apt-get install -y build-essential linux-headers-$(uname -r)
+      - name: Build Kernel Module
+        run: make all
