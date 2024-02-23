@@ -20,7 +20,7 @@
 #include <linux/platform_device.h>
 #include <linux/of_dma.h>
 #include <linux/ioctl.h>
-#include <linux/uaccess.h>
+#include <linux/uaccess2.h>
 
 // Zero copy DMA backend
 #include <zcdma.h>
