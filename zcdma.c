@@ -122,7 +122,7 @@ static void _set_target_memory(struct zcdma* cntx,
         char __user* userbuf,
         size_t userbuf_len)
 {
-    pr_devel("Userbuf address: 0x%p, length: %lu.", userbuf, userbuf_len);
+    pr_devel("Userbuf address: 0x%p, length: %u.", userbuf, userbuf_len);
 
     cntx->userbuf = userbuf;
     cntx->userbuf_len = userbuf_len;
@@ -215,7 +215,7 @@ static int _build_sgtable(  struct zcdma* cntx )
                 // when mapping the first page use the difference
                 // between the start of the user memory and the start of the page
                 offset = cntx->userbuf_page_offset;
-                pr_debug("First page offset: %lu.", offset);
+                pr_debug("First page offset: %u.", offset);
             }
             else
             {   
@@ -230,10 +230,10 @@ static int _build_sgtable(  struct zcdma* cntx )
             else
             {				
                 len = left_to_map;
-                pr_debug("Last page length: %lu.", left_to_map);
+                pr_debug("Last page length: %u.", left_to_map);
             }
 
-            pr_debug("Scatter list settings: Page idx %d: offset: %lu, length: %lu.", idx, offset, len);
+            pr_debug("Scatter list settings: Page idx %d: offset: %u, length: %u.", idx, offset, len);
             sg_set_page(sg, cntx->pages[idx], len, offset);
 
             left_to_map -= len;
@@ -569,7 +569,7 @@ static enum transfer_result wait_transfer(struct zcdma* cntx)
     struct dma_tx_state state;
 
     pr_debug("Start waiting for the dma transfer to be done. Timeout: %lu", DMA_TIMEOUT);
-    remaining_timeout =  wait_for_completion_timeout(&cntx->transfer_done_completion, DMA_TIMEOUT);
+    remaining_timeout = wait_for_completion_timeout(&cntx->transfer_done_completion, DMA_TIMEOUT);
     pr_debug("Waiting for dma transfer completion ended. Remaining timeout: %lu.", remaining_timeout);
 
     // check the result of the dma transfer

@@ -1,0 +1,289 @@
+#
+# Configure line ending normalisation for this repository.
+# See http://schacon.github.io/git/gitattributes.html for more information.
+#
+# Windows user should use: git config --global core.autocrlf = true
+# Unix/Linux users should use: git config --global core.autocrlf = input
+#
+# Source: https://github.com/gitattributes/gitattributes
+
+# Auto detect text files and perform LF normalization
+* text=auto
+
+# ================ Excluded from stats =================
+# ========= apply to all files and directories =========
+**/*docs/** linguist-documentation
+docs/** linguist-documentation
+**/*github/** linguist-vendored
+**/*vscode/** linguist-vendored
+.github/** linguist-vendored
+.vscode/** linguist-vendored
+
+# ========= Files without extension =========
+CODEOWNERS  text eol=lf
+LICENSE     text eol=lf
+COPYING     text eol=lf
+Makefile    text eol=lf
+Makefile*   text eol=lf
+defconfig*  text eol=lf
+*defconfig  text eol=lf
+Dockerfile  text eol=lf
+
+# ========= Altium =========
+*.asc       text eol=crlf
+*.BomDoc    text eol=crlf linguist-language=altium linguist-detectable
+*.drc       text eol=crlf linguist-language=altium linguist-detectable
+*.html      text diff=html eol=crlf linguist-documentation
+*.htm       text diff=html eol=crlf linguist-documentation
+*.OutJob    text eol=crlf linguist-language=altium linguist-detectable
+*.PrjPcb    text eol=crlf linguist-language=altium linguist-detectable
+*.step      binary filter=lfs diff=lfs merge=lfs
+*.SchDoc    binary filter=lfs diff=lfs merge=lfs linguist-language=altium linguist-detectable
+*.SCHLIB    binary filter=lfs diff=lfs merge=lfs linguist-language=altium linguist-detectable
+*.PcbDoc    binary filter=lfs diff=lfs merge=lfs linguist-language=altium linguist-detectable
+*.PcbLib    binary filter=lfs diff=lfs merge=lfs linguist-language=altium linguist-detectable
+*.PrjPcbStructure   text eol=crlf linguist-language=altium linguist-detectable
+
+# ========= C/C++ =========
+*.c     text diff=cpp eol=lf
+*.cc    text diff=cpp eol=lf linguist-language=C++ linguist-detectable
+*.cxx   text diff=cpp eol=lf linguist-language=C++ linguist-detectable
+*.cpp   text diff=cpp eol=lf linguist-language=C++ linguist-detectable
+*.cpi   text diff=cpp eol=lf linguist-language=C++ linguist-detectable
+*.c++   text diff=cpp eol=lf linguist-language=C++ linguist-detectable
+*.hpp   text diff=cpp eol=lf linguist-language=C++ linguist-detectable
+*.h     text diff=cpp eol=lf
+*.h++   text diff=cpp eol=lf linguist-language=C++ linguist-detectable
+*.hh    text diff=cpp eol=lf linguist-language=C++ linguist-detectable
+*.mk    text eol=lf
+*.cmake text eol=lf
+
+# Compiled Object files
+*.slo   binary filter=lfs diff=lfs merge=lfs
+*.lo    binary filter=lfs diff=lfs merge=lfs
+*.o     binary filter=lfs diff=lfs merge=lfs
+*.obj   binary filter=lfs diff=lfs merge=lfs
+
+# Precompiled Headers
+*.gch   binary filter=lfs diff=lfs merge=lfs
+*.pch   binary filter=lfs diff=lfs merge=lfs
+
+# Compiled Dynamic libraries
+*.so    binary filter=lfs diff=lfs merge=lfs
+*.dylib binary filter=lfs diff=lfs merge=lfs
+*.dll   binary filter=lfs diff=lfs merge=lfs
+
+# Compiled Static libraries
+*.lai   binary filter=lfs diff=lfs merge=lfs
+*.la    binary filter=lfs diff=lfs merge=lfs
+*.a     binary filter=lfs diff=lfs merge=lfs
+*.lib   binary filter=lfs diff=lfs merge=lfs
+
+# Executables
+*.exe   binary filter=lfs diff=lfs merge=lfs
+*.out   binary filter=lfs diff=lfs merge=lfs
+*.app   binary filter=lfs diff=lfs merge=lfs
+
+# ========= C# =========
+*.cs       text diff=csharp eol=crlf
+*.cshtml   text diff=html eol=crlf
+*.csx      text diff=csharp eol=crlf
+
+# ========= VisualStudio =========
+*.sln        text eol=crlf
+*.csproj     text eol=crlf
+*.vbproj     text eol=crlf
+*.vcxproj    text eol=crlf
+*.vcproj     text eol=crlf
+*.dbproj     text eol=crlf
+*.fsproj     text eol=crlf
+*.lsproj     text eol=crlf
+*.wixproj    text eol=crlf
+*.modelproj  text eol=crlf
+*.sqlproj    text eol=crlf
+*.wwaproj    text eol=crlf
+*.xproj      text eol=crlf
+*.props      text eol=crlf
+*.filters    text eol=crlf
+*.vcxitems   text eol=crlf
+
+# ========= FPGA development =========
+*.v    text eol=lf
+*.vhd  text eol=lf
+*.xdc  text eol=lf linguist-language=Tcl linguist-detectable
+*.tcl  text eol=lf linguist-language=Tcl linguist-detectable
+*.bif  text eol=lf linguist-language=Tcl linguist-detectable
+*.xsa  binary filter=lfs diff=lfs merge=lfs
+
+# ========= Python =========
+# Source files
+# ============
+*.pxd    text diff=python eol=lf
+*.py     text diff=python eol=lf
+*.py3    text diff=python eol=lf
+*.pyw    text diff=python eol=lf
+*.pyx    text diff=python eol=lf
+*.pyz    text diff=python eol=lf
+*.pyi    text diff=python eol=lf
+
+# Binary files
+# ============
+*.db     binary filter=lfs diff=lfs merge=lfs
+*.p      binary filter=lfs diff=lfs merge=lfs
+*.pkl    binary filter=lfs diff=lfs merge=lfs
+*.pickle binary filter=lfs diff=lfs merge=lfs
+*.pyc    binary filter=lfs diff=lfs merge=lfs export-ignore
+*.pyo    binary filter=lfs diff=lfs merge=lfs export-ignore
+*.pyd    binary filter=lfs diff=lfs merge=lfs
+
+# Jupyter notebook
+*.ipynb  text eol=lf
+
+# Note: .db, .p, and .pkl files are associated
+# with the python modules ``pickle``, ``dbm.*``,
+# ``shelve``, ``marshal``, ``anydbm``, & ``bsddb``
+# (among others).
+
+# Basic .gitattributes for a MATLAB repo.
+# This template includes Simulink and MuPAD extensions, in addition
+# to the MATLAB extensions.
+
+# ========= MATLAB =========
+# Source files
+# ============
+*.m             text diff=matlab eol=crlf
+*.mu            text diff=matlab eol=crlf
+
+# Caution: *.m also matches Mathematica packages.
+
+# MATLAB's binary files
+# ============
+*.p             binary filter=lfs diff=lfs merge=lfs
+*.mex*          binary filter=lfs diff=lfs merge=lfs
+*.fig           binary filter=lfs diff=lfs merge=lfs
+*.mat           binary filter=lfs diff=lfs merge=lfs
+*.mdl           binary filter=lfs diff=lfs merge=lfs
+*.slx           binary filter=lfs diff=lfs merge=lfs
+*.mdlp          binary filter=lfs diff=lfs merge=lfs
+*.slxp          binary filter=lfs diff=lfs merge=lfs
+*.sldd          binary filter=lfs diff=lfs merge=lfs
+*.mltbx         binary filter=lfs diff=lfs merge=lfs
+*.mlappinstall  binary filter=lfs diff=lfs merge=lfs
+*.mlpkginstall  binary filter=lfs diff=lfs merge=lfs
+*.mn            binary filter=lfs diff=lfs merge=lfs
+
+# ========= Microchip =========
+# text/binary files
+*.S             text eol=lf
+*.gld           text eol=lf
+*.jar           binary filter=lfs diff=lfs merge=lfs
+*.hex           binary filter=lfs diff=lfs merge=lfs
+*.bl2           binary filter=lfs diff=lfs merge=lfs
+
+# ========= Yocto Project =========
+# text/config files
+*.dts       text eol=lf
+*.dtsi      text eol=lf
+*.inc       text eol=lf linguist-language=BitBake linguist-detectable
+*.conf      text eol=lf linguist-language=BitBake linguist-detectable
+*.wks       text eol=lf linguist-language=BitBake linguist-detectable
+*.bb        text eol=lf linguist-language=BitBake linguist-detectable
+*.bbappend  text eol=lf linguist-language=BitBake linguist-detectable
+*.bbclass   text eol=lf linguist-language=BitBake linguist-detectable
+*.service   text eol=lf
+
+# ========= PowerShell =========
+# Source files
+*.ps1      text eol=crlf
+*.ps1x     text eol=crlf
+*.psm1     text eol=crlf
+*.psd1     text eol=crlf
+*.ps1xml   text eol=crlf
+*.pssc     text eol=crlf
+*.psrc     text eol=crlf
+*.cdxml    text eol=crlf
+
+# ========= Common =========
+# Documents
+*.bibtex   text diff=bibtex eol=lf
+*.doc      diff=astextplain
+*.DOC      diff=astextplain
+*.docx     diff=astextplain
+*.DOCX     diff=astextplain
+*.dot      diff=astextplain
+*.DOT      diff=astextplain
+*.pdf      diff=astextplain
+*.PDF      diff=astextplain
+*.rtf      diff=astextplain
+*.RTF      diff=astextplain
+*.md       text diff=markdown eol=lf linguist-detectable
+*.mdx      text diff=markdown eol=lf linguist-detectable
+*.tex      text diff=tex eol=lf
+*.adoc     text
+*.textile  text
+*.mustache text
+*.csv      text eol=crlf
+*.inf      text eol=crlf
+*.tab      text
+*.tsv      text
+*.txt      text eol=lf
+*.sql      text eol=lf
+*.ini      text eol=lf
+*.epub     diff=astextplain
+*.cat      binary filter=lfs diff=lfs merge=lfs
+*.eot      binary filter=lfs diff=lfs merge=lfs
+*.ttf      binary filter=lfs diff=lfs merge=lfs
+*.woff     binary filter=lfs diff=lfs merge=lfs
+*.woff2    binary filter=lfs diff=lfs merge=lfs
+
+# Graphics
+*.png      binary filter=lfs diff=lfs merge=lfs
+*.jpg      binary filter=lfs diff=lfs merge=lfs
+*.jpeg     binary filter=lfs diff=lfs merge=lfs
+*.gif      binary filter=lfs diff=lfs merge=lfs
+*.tif      binary filter=lfs diff=lfs merge=lfs
+*.tiff     binary filter=lfs diff=lfs merge=lfs
+*.ico      binary filter=lfs diff=lfs merge=lfs
+# SVG treated as text by default.
+# *.svg      text
+# If you want to treat it as binary,
+# use the following line instead.
+*.svg      binary filter=lfs diff=lfs merge=lfs
+*.eps      binary filter=lfs diff=lfs merge=lfs
+
+# Scripts
+*.bash     text eol=lf
+*.fish     text eol=lf
+*.sh       text eol=lf
+*.zsh      text eol=lf
+# These are explicitly windows files and should use crlf
+*.bat      text eol=crlf
+*.cmd      text eol=crlf
+
+# Serialisation
+*.json     text eol=lf
+*.toml     text eol=lf
+*.xml      text eol=lf
+*.yaml     text eol=lf
+*.yml      text eol=lf
+
+# Archives
+*.7z       binary filter=lfs diff=lfs merge=lfs
+*.gz       binary filter=lfs diff=lfs merge=lfs
+*.tar      binary filter=lfs diff=lfs merge=lfs
+*.tgz      binary filter=lfs diff=lfs merge=lfs
+*.zip      binary filter=lfs diff=lfs merge=lfs
+
+# Enterprise Architect
+*.qea      binary filter=lfs diff=lfs merge=lfs
+
+# Text files where line endings should be preserved
+*.patch    -text
+
+#
+# Exclude files from exporting
+#
+
+.gitattributes export-ignore
+.gitignore     export-ignore
+.gitkeep       export-ignore

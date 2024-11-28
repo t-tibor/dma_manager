@@ -30,7 +30,7 @@
 #define DRIVER_NAME 			"dma_manager"
 #define MAX_NAME_LENG			32
 #define ERROR 					-1
-#define TIMEOUT_DEFAULT_MSECS	3000
+#define TIMEOUT_DEFAULT_MSECS	8000
 
 
 // ------------------ Local types ------------------
@@ -124,7 +124,7 @@ static ssize_t read(struct file *f, char __user *userbuf, size_t count, loff_t *
     int read_size = 0;
     struct dma_frontend* frontend = (struct dma_frontend *)f->private_data;
 
-    pr_debug("DMA read API is called with parameters: userbuf=0x%p, count=%lu, offset=%lld.\n", 
+    pr_debug("DMA read API is called with parameters: userbuf=0x%p, count=%u, offset=%lld.\n", 
                                                                         userbuf,
                                                                         count,
                                                                         *f_pos);
@@ -155,7 +155,7 @@ static ssize_t write(struct file *f, const char __user *userbuf, size_t count, l
     int write_size = 0;
     struct dma_frontend *frontend = (struct dma_frontend *)f->private_data;
 
-    pr_debug("DMA write API is called with parameters: userbuf=0x%p, count=%lu, offset=%lld.\n", 
+    pr_debug("DMA write API is called with parameters: userbuf=0x%p, count=%u, offset=%lld.\n", 
                                                                         userbuf,
                                                                         count,
                                                                         *f_pos);
@@ -569,7 +569,7 @@ static int __init dma_manager_init(void)
 
     // Create a device class in the sysfs.
     // This will be used to create the individual devices for every dma channels.
-    dma_char_device_class = class_create(THIS_MODULE, DRIVER_NAME);
+    dma_char_device_class = class_create(DRIVER_NAME);
     if ((NULL==dma_char_device_class) || IS_ERR(dma_char_device_class)) {
         pr_err("Unable to create class\n");
         errorCode = ERROR;
