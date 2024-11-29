@@ -62,9 +62,9 @@ struct zcdma* zcdma_alloc(const struct dma_hw_channel_info* const hw_info);
  * @param len Number of bytes to be transferred by the DMA.
  * @return ssize_t Number of received bytes.
  */
-ssize_t zcdma_read( struct zcdma*       session, 
-                    char __user*        userbuf, 
-                    size_t              len     );
+ssize_t zcdma_read( struct zcdma* session, 
+                    char __user* userbuf, 
+                    long unsigned int len );
 
 
 /**
@@ -76,9 +76,9 @@ ssize_t zcdma_read( struct zcdma*       session,
  * @param len Number of bytes to by transferred by the DMA.
  * @return ssize_t Number of bytes successfully written.
  */
-ssize_t zcdma_write(struct zcdma*       session,
-                    const char __user* userbuf, 
-                    size_t len);
+ssize_t zcdma_write( struct zcdma* session,
+                     const char __user* userbuf, 
+                     long unsigned int len );
 
 
 /**
