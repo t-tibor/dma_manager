@@ -137,6 +137,7 @@ static void _set_target_memory(struct zcdma* cntx,
 static int _collect_pages(struct zcdma* cntx)
 {
     int retval = 0;
+    int pages_cnt = 0;
 
     BUG_ON( cntx->pages ); // should be null
 
@@ -157,17 +158,18 @@ static int _collect_pages(struct zcdma* cntx)
         goto err;
     }
 
+    pages_cnt = (int)(cntx->pages_cnt);
     /* Pin the user pages in the memory. */
     retval = get_user_pages_fast(
                 (unsigned long)cntx->userbuf,    // start
-                (int)cntx->pages_cnt,
+                pages_cnt,
                 (ZCDMA_DIR_READ == cntx->hw.direction), // write
                 cntx->pages
             );
-    if( retval != (int)(cntx->pages_cnt) )
+    if( retval != pages_cnt )
     {
-        pr_err("get_user_pages_fast() returned %d, expected %lu\n",
-            retval, cntx->pages_cnt);
+        pr_err("get_user_pages_fast() returned %d, expected %d\n",
+            retval, pages_cnt);
         goto err;
     }
     else
@@ -189,9 +191,9 @@ static int _build_sgtable( struct zcdma* cntx )
 {
     int retval = 0;
     long unsigned int page_size = PAGE_SIZE;
-    unsigned int pages_cnt = (unsigned int)cntx->pages_cnt;
+    unsigned int pages_cnt = (unsigned int)(cntx->pages_cnt);
 
-    int idx; // index of the current processed page/scatterlist
+    unsigned int idx; // index of the current processed page/scatterlist
     struct scatterlist* sg; // scatterlist iterator
     struct page* current_page; // page iterator
     long unsigned int len;   
@@ -263,6 +265,7 @@ static int _build_sgtable( struct zcdma* cntx )
 static int _map_sgtable( struct zcdma*   cntx    )
 {
     int                     retval = 0;
+    int                     pages_cnt = (int)(cntx->pages_cnt);
     int                     mapped_page_cnt;
     struct device* const    dma_dev = dmaengine_get_dma_device(cntx->hw.dma_chan);
 
@@ -273,14 +276,14 @@ static int _map_sgtable( struct zcdma*   cntx    )
     {   
         mapped_page_cnt = dma_map_sg(dma_dev, 
                             cntx->sg_table.sgl, 
-                            (int)cntx->pages_cnt,
+                            pages_cnt,
                             ZCDMA_DIR_TO_DATA_DIR(cntx->hw.direction)
                             );
-        if(mapped_page_cnt != cntx->pages_cnt)
+        if(mapped_page_cnt != pages_cnt)
         {
             cntx->sg_table_is_mapped = false;
-            pr_err("dma_map_sg() returned %d, expected %lu\n", 
-                        mapped_page_cnt, cntx->pages_cnt);
+            pr_err("dma_map_sg() returned %d, expected %d\n", 
+                        mapped_page_cnt, pages_cnt);
             retval = -ENOMEM;
         }
         else
@@ -305,12 +308,13 @@ static int _map_sgtable( struct zcdma*   cntx    )
 static int _prepare_slave_sg(struct zcdma* cntx )
 {
     int retval = 0;
+    unsigned int pages_cnt = (unsigned int)(cntx->pages_cnt);
 
     pr_debug("Preparing descriptor for the DMA transaction.");
     cntx->tx_descriptor = dmaengine_prep_slave_sg(
                         cntx->hw.dma_chan,
                         cntx->sg_table.sgl,
-                        (unsigned int)cntx->pages_cnt,
+                        pages_cnt,
                         ZCDMA_DIR_TO_TRANFER_DIR(cntx->hw.direction),
                         DMA_PREP_INTERRUPT
                         );    // requenst an interrupt 
@@ -398,13 +402,14 @@ static void _dmaengine_callback_func(void* data)
 static void _unmap_sgtable( struct zcdma* cntx  )
 {
     struct device* const dma_dev = dmaengine_get_dma_device(cntx->hw.dma_chan);
+    int pages_cnt = (int)(cntx->pages_cnt);
 
     if( false != cntx->sg_table_is_mapped )
     {
         pr_debug("Unmapping sg list.");
         dma_unmap_sg(dma_dev,
             cntx->sg_table.sgl,
-            (int)cntx->pages_cnt,
+            pages_cnt,
             ZCDMA_DIR_TO_DATA_DIR(cntx->hw.direction)
             );
 
@@ -429,12 +434,12 @@ static void _deinit_sgtable( struct zcdma* cntx )
 static void _release_pages( struct zcdma* const cntx)
 {
     int pidx;
-    int pages_cnt = (int)cntx->pages_cnt;
+    int pages_cnt = (int)(cntx->pages_cnt);
     struct page* page;
 
     if( false != cntx->pages_are_pinned )
     {
-        for(pidx=0; pidx < pages_cnt; pidx++)
+        for(pidx = 0; pidx < pages_cnt; pidx++)
         {
             /* Mark all pages dirty for now (not sure how to do this more
              * efficiently yet -- dmaengine API doesn't seem to return any
@@ -444,7 +449,7 @@ static void _release_pages( struct zcdma* const cntx)
             set_page_dirty( page );
             put_page( page );
         }
-        pr_debug("%lu pages are unmapped.", cntx->pages_cnt);
+        pr_debug("%d pages are unmapped.", pages_cnt);
 
         cntx->pages_are_pinned = false;
     }
