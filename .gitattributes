@@ -114,6 +114,8 @@ Dockerfile  text eol=lf
 *.tcl  text eol=lf linguist-language=Tcl linguist-detectable
 *.bif  text eol=lf linguist-language=Tcl linguist-detectable
 *.xsa  binary filter=lfs diff=lfs merge=lfs
+*.bin  binary filter=lfs diff=lfs merge=lfs
+*.bit  binary filter=lfs diff=lfs merge=lfs
 
 # ========= Python =========
 # Source files
