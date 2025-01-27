@@ -30,7 +30,7 @@
 #define DRIVER_NAME 			"dma_manager"
 #define MAX_NAME_LENG			32
 #define ERROR 					-1
-#define TIMEOUT_DEFAULT_MSECS	3000
+#define TIMEOUT_DEFAULT_MSECS	8000
 
 
 // ------------------ Local types ------------------
@@ -122,11 +122,12 @@ static int release(struct inode *inode, struct file *f)
 static ssize_t read(struct file *f, char __user *userbuf, size_t count, loff_t *f_pos)
 {
     int read_size = 0;
+    long unsigned int read_count = count;
     struct dma_frontend* frontend = (struct dma_frontend *)f->private_data;
 
     pr_debug("DMA read API is called with parameters: userbuf=0x%p, count=%lu, offset=%lld.\n", 
                                                                         userbuf,
-                                                                        count,
+                                                                        read_count,
                                                                         *f_pos);
 
     if (DMA_DEV_TO_MEM != frontend->direction)
@@ -135,7 +136,7 @@ static ssize_t read(struct file *f, char __user *userbuf, size_t count, loff_t *
         return -EINVAL;
     }
 
-    read_size = zcdma_read(frontend->zcdma, userbuf, count);	
+    read_size = zcdma_read(frontend->zcdma, userbuf, read_count);
     pr_debug("zcdma_read return: %d.\n", read_size);
     if (read_size <= 0)
     {
@@ -153,11 +154,12 @@ static ssize_t read(struct file *f, char __user *userbuf, size_t count, loff_t *
 static ssize_t write(struct file *f, const char __user *userbuf, size_t count, loff_t *f_pos)
 {
     int write_size = 0;
+    long unsigned int write_count = count;
     struct dma_frontend *frontend = (struct dma_frontend *)f->private_data;
 
     pr_debug("DMA write API is called with parameters: userbuf=0x%p, count=%lu, offset=%lld.\n", 
                                                                         userbuf,
-                                                                        count,
+                                                                        write_count,
                                                                         *f_pos);
 
     if (DMA_MEM_TO_DEV != frontend->direction)
@@ -166,7 +168,7 @@ static ssize_t write(struct file *f, const char __user *userbuf, size_t count, l
         return -EINVAL;
     }
 
-    write_size = zcdma_write(frontend->zcdma, userbuf, count);
+    write_size = zcdma_write(frontend->zcdma, userbuf, write_count);
     pr_debug("zcdma_write return: %d.\n", write_size);
     if (write_size <= 0)
     {
@@ -569,7 +571,7 @@ static int __init dma_manager_init(void)
 
     // Create a device class in the sysfs.
     // This will be used to create the individual devices for every dma channels.
-    dma_char_device_class = class_create(THIS_MODULE, DRIVER_NAME);
+    dma_char_device_class = class_create(DRIVER_NAME);
     if ((NULL==dma_char_device_class) || IS_ERR(dma_char_device_class)) {
         pr_err("Unable to create class\n");
         errorCode = ERROR;

@@ -54,14 +54,14 @@ struct zcdma {
     struct semaphore sem;
 
     // User memory to be used by the DMA
-    char* __user    userbuf;
-    size_t          userbuf_len;
-    unsigned int    userbuf_page_offset;
+    char* __user      userbuf;
+    long unsigned int userbuf_len;
+    long unsigned int userbuf_page_offset;
 
     // Pages that cover the user buffer
-    struct page** 	pages;
-    unsigned int 	pages_cnt;
-    bool            pages_are_pinned;
+    struct page** 	  pages;
+    long unsigned int pages_cnt;
+    bool              pages_are_pinned;
 
     // scatterlist 
     struct sg_table sg_table;
@@ -90,9 +90,9 @@ struct zcdma {
 static void _dmaengine_callback_func(void* data);
 
 // --------------------------------------------------------------------- Local function declarations ---------------------------------------------------------------------
-static void _set_target_memory(struct zcdma* cntx, 
-        char __user* userbuf,
-        size_t userbuf_len);
+static void _set_target_memory( struct zcdma* cntx, 
+                                char __user* userbuf,
+                                long unsigned int userbuf_len );
 static int _collect_pages(struct zcdma* cntx);  
 static int _build_sgtable(  struct zcdma* cntx );   
 static int _map_sgtable( struct zcdma*   cntx    );
@@ -103,13 +103,13 @@ static void _unmap_sgtable( struct zcdma* cntx  );
 static void _deinit_sgtable( struct zcdma* cntx );
 static void _release_pages( struct zcdma* const cntx);
 static void cleanup_transfer_data( struct zcdma* cntx);
-static int start_dma_transfer(  struct zcdma* cntx,
-                                char __user* userbuf,
-                                size_t count                        );
+static int start_dma_transfer( struct zcdma* cntx,
+                               char __user* userbuf,
+                               long unsigned int count );
 static enum transfer_result wait_transfer(struct zcdma* cntx);         
 static ssize_t start_and_wait_transfer( struct zcdma* cntx,
                                         char __user* userbuf,
-                                        size_t count            );
+                                        long unsigned int count );
 static bool zcdma_lock( struct zcdma* cntx );
 static void zcdma_unlock( struct zcdma* cntx );
 static bool zcdma_init( struct zcdma*  cntx,
@@ -120,7 +120,7 @@ static void zcdma_deinit(struct zcdma* session);
 // --------------------------------------------------------------------- Local function definitions ---------------------------------------------------------------------
 static void _set_target_memory(struct zcdma* cntx, 
         char __user* userbuf,
-        size_t userbuf_len)
+        long unsigned int userbuf_len)
 {
     pr_devel("Userbuf address: 0x%p, length: %lu.", userbuf, userbuf_len);
 
@@ -137,13 +137,14 @@ static void _set_target_memory(struct zcdma* cntx,
 static int _collect_pages(struct zcdma* cntx)
 {
     int retval = 0;
+    int pages_cnt = 0;
 
     BUG_ON( cntx->pages ); // should be null
 
     cntx->userbuf_page_offset = offset_in_page(cntx->userbuf);
     // determine how many pages long the user memory is
     cntx->pages_cnt = (cntx->userbuf_page_offset + cntx->userbuf_len + PAGE_SIZE-1) / PAGE_SIZE;
-    pr_devel("Userbuffer page offset: %u, covered page count: %u", 
+    pr_devel("Userbuffer page offset: %lu, covered page count: %lu", 
         cntx->userbuf_page_offset,
         cntx->pages_cnt);
     // allocate kernel memory for the page pointers
@@ -157,17 +158,18 @@ static int _collect_pages(struct zcdma* cntx)
         goto err;
     }
 
+    pages_cnt = (int)(cntx->pages_cnt);
     /* Pin the user pages in the memory. */
     retval = get_user_pages_fast(
                 (unsigned long)cntx->userbuf,    // start
-                cntx->pages_cnt,
+                pages_cnt,
                 (ZCDMA_DIR_READ == cntx->hw.direction), // write
                 cntx->pages
             );
-    if( retval != cntx->pages_cnt )
+    if( retval != pages_cnt )
     {
-        pr_err("get_user_pages_fast() returned %d, expected %u\n",
-            retval, cntx->pages_cnt);
+        pr_err("get_user_pages_fast() returned %d, expected %d\n",
+            retval, pages_cnt);
         goto err;
     }
     else
@@ -185,27 +187,29 @@ err:
 ///         occupied by the user memory.
 /// @param cntx Context to perform the opertion in.
 /// @return 0 in case of no error.
-static int _build_sgtable(  struct zcdma* cntx )
+static int _build_sgtable( struct zcdma* cntx )
 {
     int retval = 0;
+    long unsigned int page_size = PAGE_SIZE;
+    unsigned int pages_cnt = (unsigned int)(cntx->pages_cnt);
 
-    int idx; // index of the current processed page/scatterlist
+    unsigned int idx; // index of the current processed page/scatterlist
     struct scatterlist* sg; // scatterlist iterator
     struct page* current_page; // page iterator
-    size_t len;   
-    size_t offset;
-    size_t left_to_map;
+    long unsigned int len;   
+    long unsigned int offset;
+    long unsigned int left_to_map;
 
 
     pr_devel("Building scatter-gather table.");
 
     // Allocate a scatter-gather table
-    retval = sg_alloc_table( &cntx->sg_table, cntx->pages_cnt, GFP_KERNEL );
+    retval = sg_alloc_table( &cntx->sg_table, pages_cnt, GFP_KERNEL );
     if( 0 == retval )
     {
         // Build the scatterlist
         left_to_map = cntx->userbuf_len;
-        for_each_sg( cntx->sg_table.sgl, sg, cntx->pages_cnt, idx )
+        for_each_sg( cntx->sg_table.sgl, sg, pages_cnt, idx )
         {
             current_page = cntx->pages[idx];
             // determine the offset and length of the memory region inside the current page
@@ -223,9 +227,9 @@ static int _build_sgtable(  struct zcdma* cntx )
                 // of the pages
                 offset = 0;
             }
-            if( (offset + left_to_map) > (size_t)PAGE_SIZE )
+            if( (offset + left_to_map) > page_size )
             {
-                len = (size_t)PAGE_SIZE - offset;
+                len = page_size - offset;
             }
             else
             {				
@@ -234,7 +238,7 @@ static int _build_sgtable(  struct zcdma* cntx )
             }
 
             pr_debug("Scatter list settings: Page idx %d: offset: %lu, length: %lu.", idx, offset, len);
-            sg_set_page(sg, cntx->pages[idx], len, offset);
+            sg_set_page(sg, cntx->pages[idx], (unsigned int)len, (unsigned int)offset);
 
             left_to_map -= len;
         }        
@@ -261,6 +265,7 @@ static int _build_sgtable(  struct zcdma* cntx )
 static int _map_sgtable( struct zcdma*   cntx    )
 {
     int                     retval = 0;
+    int                     pages_cnt = (int)(cntx->pages_cnt);
     int                     mapped_page_cnt;
     struct device* const    dma_dev = dmaengine_get_dma_device(cntx->hw.dma_chan);
 
@@ -271,14 +276,14 @@ static int _map_sgtable( struct zcdma*   cntx    )
     {   
         mapped_page_cnt = dma_map_sg(dma_dev, 
                             cntx->sg_table.sgl, 
-                            cntx->pages_cnt,
+                            pages_cnt,
                             ZCDMA_DIR_TO_DATA_DIR(cntx->hw.direction)
                             );
-        if(mapped_page_cnt != cntx->pages_cnt)
+        if(mapped_page_cnt != pages_cnt)
         {
             cntx->sg_table_is_mapped = false;
             pr_err("dma_map_sg() returned %d, expected %d\n", 
-                        mapped_page_cnt, cntx->pages_cnt);
+                        mapped_page_cnt, pages_cnt);
             retval = -ENOMEM;
         }
         else
@@ -303,12 +308,13 @@ static int _map_sgtable( struct zcdma*   cntx    )
 static int _prepare_slave_sg(struct zcdma* cntx )
 {
     int retval = 0;
+    unsigned int pages_cnt = (unsigned int)(cntx->pages_cnt);
 
     pr_debug("Preparing descriptor for the DMA transaction.");
     cntx->tx_descriptor = dmaengine_prep_slave_sg(
                         cntx->hw.dma_chan,
                         cntx->sg_table.sgl,
-                        cntx->pages_cnt,
+                        pages_cnt,
                         ZCDMA_DIR_TO_TRANFER_DIR(cntx->hw.direction),
                         DMA_PREP_INTERRUPT
                         );    // requenst an interrupt 
@@ -396,13 +402,14 @@ static void _dmaengine_callback_func(void* data)
 static void _unmap_sgtable( struct zcdma* cntx  )
 {
     struct device* const dma_dev = dmaengine_get_dma_device(cntx->hw.dma_chan);
+    int pages_cnt = (int)(cntx->pages_cnt);
 
     if( false != cntx->sg_table_is_mapped )
     {
         pr_debug("Unmapping sg list.");
         dma_unmap_sg(dma_dev,
             cntx->sg_table.sgl,
-            cntx->pages_cnt,
+            pages_cnt,
             ZCDMA_DIR_TO_DATA_DIR(cntx->hw.direction)
             );
 
@@ -427,11 +434,12 @@ static void _deinit_sgtable( struct zcdma* cntx )
 static void _release_pages( struct zcdma* const cntx)
 {
     int pidx;
+    int pages_cnt = (int)(cntx->pages_cnt);
     struct page* page;
 
     if( false != cntx->pages_are_pinned )
     {
-        for(pidx=0; pidx<cntx->pages_cnt; pidx++)
+        for(pidx = 0; pidx < pages_cnt; pidx++)
         {
             /* Mark all pages dirty for now (not sure how to do this more
              * efficiently yet -- dmaengine API doesn't seem to return any
@@ -441,7 +449,7 @@ static void _release_pages( struct zcdma* const cntx)
             set_page_dirty( page );
             put_page( page );
         }
-        pr_debug("%d pages are unmapped.", cntx->pages_cnt);
+        pr_debug("%d pages are unmapped.", pages_cnt);
 
         cntx->pages_are_pinned = false;
     }
@@ -492,9 +500,9 @@ static void cleanup_transfer_data( struct zcdma* cntx)
 }
 
 
-static int start_dma_transfer(  struct zcdma* cntx,
-                                char __user* userbuf,
-                                size_t count                        )
+static int start_dma_transfer( struct zcdma* cntx,
+                               char __user* userbuf,
+                               long unsigned int count )
 {
     int retval = 0;
 
@@ -569,7 +577,7 @@ static enum transfer_result wait_transfer(struct zcdma* cntx)
     struct dma_tx_state state;
 
     pr_debug("Start waiting for the dma transfer to be done. Timeout: %lu", DMA_TIMEOUT);
-    remaining_timeout =  wait_for_completion_timeout(&cntx->transfer_done_completion, DMA_TIMEOUT);
+    remaining_timeout = wait_for_completion_timeout(&cntx->transfer_done_completion, DMA_TIMEOUT);
     pr_debug("Waiting for dma transfer completion ended. Remaining timeout: %lu.", remaining_timeout);
 
     // check the result of the dma transfer
@@ -607,7 +615,7 @@ static enum transfer_result wait_transfer(struct zcdma* cntx)
  */
 static ssize_t start_and_wait_transfer( struct zcdma* cntx,
                                         char __user* userbuf,
-                                        size_t count            )
+                                        long unsigned int count )
 {
     ssize_t retval;
     int start_retval;
@@ -620,7 +628,7 @@ static ssize_t start_and_wait_transfer( struct zcdma* cntx,
         if( TRANSFER_RESULT_IS_OK(wait_retval) )
         {
             pr_debug("Read operation completed successfully.\n");
-            retval = count;
+            retval = (ssize_t)count;
         }
         else
         {
@@ -729,7 +737,7 @@ struct zcdma* zcdma_alloc(const struct dma_hw_channel_info* const hw_info)
 }
 
 
-ssize_t zcdma_read(struct zcdma* cntx, char __user* userbuf, size_t len)
+ssize_t zcdma_read(struct zcdma* cntx, char __user* userbuf, long unsigned int len)
 {
     ssize_t retval = 0;
 
@@ -769,7 +777,7 @@ ssize_t zcdma_read(struct zcdma* cntx, char __user* userbuf, size_t len)
     return retval;
 }
 
-ssize_t zcdma_write(struct zcdma* cntx, const char __user* userbuf, size_t len)
+ssize_t zcdma_write(struct zcdma* cntx, const char __user* userbuf, long unsigned int len)
 {
     ssize_t retval = 0;
     char __user* volatile_userbuf = (char __user*)userbuf; // cast away the const, the DMA won't modify the buffer
